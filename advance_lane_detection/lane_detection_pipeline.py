@@ -65,7 +65,7 @@ class LaneDetectionPipeline(object):
         assert self._tvect is not None
         self._calibrated = True
 
-    def _abs_sobel_thresh(img, orient='x', sobel_kernel=3, thresh=(0, 255)):
+    def _abs_sobel_thresh(self, img, orient='x', sobel_kernel=3, thresh=(0, 255)):
         # Calculate directional gradient
         # Apply threshold
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -78,7 +78,7 @@ class LaneDetectionPipeline(object):
         final_img[(scaled_img > thresh[0]) & (scaled_img < thresh[1])] = 1
         return final_img
 
-    def _mag_thresh(img, sobel_kernel=3, mag_thresh=(0, 255)):
+    def _mag_thresh(self, img, sobel_kernel=3, mag_thresh=(0, 255)):
         # Calculate gradient magnitude
         # Apply threshold
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -90,7 +90,7 @@ class LaneDetectionPipeline(object):
         final_img[(scaled_img > mag_thresh[0]) & (scaled_img < mag_thresh[1])] = 1
         return final_img
 
-    def _dir_threshold(img, sobel_kernel=3, thresh=(0, np.pi/2)):
+    def _dir_threshold(self, img, sobel_kernel=3, thresh=(0, np.pi/2)):
         # Calculate gradient direction
         # Apply threshold
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -101,7 +101,7 @@ class LaneDetectionPipeline(object):
         final_img[(binary_img > thresh[0]) & (binary_img < thresh[1])] = 1
         return final_img
 
-    def _s_channel_thresholding(img, threshold=(95,255)):
+    def _s_channel_thresholding(self, img, threshold=(95,255)):
         """
             Using HLS color spaces to threshold the image
         """
@@ -113,7 +113,7 @@ class LaneDetectionPipeline(object):
         print (s_chan > threshold[0])
         return binary_img
 
-    def _threshold_image(img):
+    def _threshold_image(self, img):
         """
             Apply all threshold techniques to filter out unneccessary noise.
         """
@@ -121,14 +121,14 @@ class LaneDetectionPipeline(object):
         abs_image = self._abs_sobel_thresh(img, thresh=(90,255))
         mag_grad_image = self._mag_thresh(img, mag_thresh=(110,255))
         dir_image = self._dir_threshold(img, sobel_kernel=15, thresh=(0.7, 1.3))
-        s_image = self._s_channel_thresholding(undistort_images[-1], threshold=(95,255))
+        s_image = self._s_channel_thresholding(img, threshold=(95,255))
         shape = img.shape[:2]
         combine_mask_img = np.zeros(shape)
         combine_mask_img[(s_image > 0) | ((mag_grad_image >0) & (dir_image > 0)) | (abs_image > 0)] = 1
         return combine_mask_img
 
 
-    def _warp_image_to_bird_eye_view(undistort_image, mtx, dist):
+    def _warp_image_to_bird_eye_view(self, undistort_image):
         """
             Warp image to bird eye view so we can use sliding windows to search
             for the lanes.
@@ -158,7 +158,7 @@ class LaneDetectionPipeline(object):
         warped = cv2.warpPerspective(undistort_image, M, (width, height), flags=cv2.INTER_LINEAR)
         return warped, M, Minv, (tl,tr,br,bl)
 
-    def _find_lanes_using_sliding_windows(warped_image, margin=100, minpix=50, debug=False):
+    def _find_lanes_using_sliding_windows(self, warped_image, margin=100, minpix=50, debug=False):
         """
 
             margin: where to search for pixel
@@ -235,12 +235,14 @@ class LaneDetectionPipeline(object):
         righty = nonzero_y[all_good_right_lanes]
         left_fit = np.polyfit(lefty, leftx, 2)
         right_fit = np.polyfit(righty, rightx, 2)
+        ploty = np.linspace(0, warped_image.shape[0] - 1, warped_image.shape[0] )
+        ploty = np.linspace(0, warped_image.shape[0] - 1, warped_image.shape[0] )
+        left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+        right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
 
         # FOR PLOTTING ONLY
         if debug:
-            ploty = np.linspace(0, warped_image.shape[0] - 1, warped_image.shape[0] )
-            left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
-            right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+
 
             output_img[nonzero_y[all_good_left_lanes], nonzero_x[all_good_left_lanes]] = [255, 0, 0]
             output_img[nonzero_y[all_good_right_lanes], nonzero_x[all_good_right_lanes]] = [0, 0, 255]
@@ -254,10 +256,10 @@ class LaneDetectionPipeline(object):
             plt.xlim(0, 1280)
             plt.ylim(720, 0)
 
-        return left_fit, right_fit
+        return left_fit, right_fit, leftx, lefty, rightx, righty, ploty, left_fitx, right_fitx
 
 
-    def fit_poly(img_shape, leftx, lefty, rightx, righty):
+    def fit_poly(self, img_shape, leftx, lefty, rightx, righty):
         ### TO-DO: Fit a second order polynomial to each with np.polyfit() ###
         left_fit = np.polyfit(lefty, leftx, 2)
         right_fit = np.polyfit(righty, rightx, 2)
@@ -267,9 +269,9 @@ class LaneDetectionPipeline(object):
         left_fitx = left_fit[0]*ploty**2 + left_fit[1] * ploty + left_fit[2]
         right_fitx = right_fit[0]*ploty**2 + right_fit[1] * ploty + right_fit[2]
 
-        return left_fit, right_fit, left_fitx, right_fitx, ploty
+        return left_fit, right_fit, leftx, lefty, rightx, righty, ploty, left_fitx ,right_fitx
 
-    def search_around_poly(binary_warped, left_fit, right_fit, margin=100, thershold=0.8):
+    def search_around_poly(self, binary_warped, left_fit, right_fit, margin=100, threshold=0.8):
         nonzero = binary_warped.nonzero()
         nonzero_y = np.array(nonzero[0])
         nonzero_x = np.array(nonzero[1])
@@ -287,6 +289,7 @@ class LaneDetectionPipeline(object):
         # if number of pixels ids is smaller than some threshold
         # return none so we will use sliding windows to rediscover the windows
         if (len(left_lane_ids) + len(right_lane_ids)) / np.float(len(nonzero_x)) < threshold:
+            print ("Bad lane detected")
             return None, None, None, None, None
 
         leftx = nonzero_x[left_lane_ids]
@@ -295,7 +298,26 @@ class LaneDetectionPipeline(object):
         righty = nonzero_y[right_lane_ids]
 
         # now we have the values
-        return fit_poly(binary_warped.shape, leftx, lefty, rightx, righty)
+        return self.fit_poly(binary_warped.shape, leftx, lefty, rightx, righty)
+
+    def _draw_lanes_on_image(self, warped, undistort_img, ploty, left_fitx, right_fitx, Minv):
+        # Create an image to draw the lines on
+        img_shape = undistort_img.shape
+        warp_zero = np.zeros_like(warped).astype(np.uint8)
+        color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
+        # Recast the x and y points into usable format for cv2.fillPoly()
+        pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
+        pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
+        pts = np.hstack((pts_left, pts_right))
+
+        # Draw the lane onto the warped blank image
+        cv2.fillPoly(color_warp, np.int_([pts]), (0,255, 0))
+
+        # Warp the blank back to original image space using inverse perspective matrix (Minv)
+        newwarp = cv2.warpPerspective(color_warp, Minv, (img_shape[1], img_shape[0]))
+        # Combine the result with the original image
+        result = cv2.addWeighted(undistort_img, 1, newwarp, 0.3, 0)
+        return result
 
     def run(self, video_file):
         # run pipeline here
@@ -305,13 +327,32 @@ class LaneDetectionPipeline(object):
         # open the video and feed the frame here
         cap = cv2.VideoCapture(video_file)
         while cap.isOpened():
-            ret, frame = cap.read()
+            ret, orig_frame = cap.read()
             # if frame is valid then run it through the pipe line
             if ret == True:
-                print("Good frame")
-                cv2.imshow('Frame', frame)
-                if cv2.waitKey(25) & 0xFF == ord('q'):
-                     break
+                print("Good frame", orig_frame.shape)
+                frame = self._threshold_image(orig_frame)
+                #obtain bird-eye view of the lane
+                warped, M, Minv, _ = self._warp_image_to_bird_eye_view(frame)
+                # if one of the lane is not detected use sliding windows to search it
+                if (not self._current_left_lane.detected) or (not self._current_right_lane.detected):
+                    left_fit, right_fit, leftx, lefty, rightx, righty, ploty, left_fitx ,right_fitx = self._find_lanes_using_sliding_windows(warped)
+                    self._current_left_lane.update(True, allx=leftx, ally=lefty, fit_coeff=left_fit)
+                    self._current_right_lane.update(True, allx=rightx, ally=righty, fit_coeff=right_fit)
+                else: # just search around the current line here
+                    print("search around")
+                    left_fit = self._current_left_lane.best_fit
+                    right_fit = self._current_right_lane.best_fit
+                    left_fit, right_fit, leftx, lefty, rightx, righty, ploty, left_fitx ,right_fitx = \
+                                        self.search_around_poly(warped, left_fit, right_fit)
+                    self._current_left_lane.update(True, allx=leftx, ally=lefty, fit_coeff=left_fit)
+                    self._current_right_lane.update(True, allx=rightx, ally=righty, fit_coeff=right_fit)
+
+                result_frame = self._draw_lanes_on_image(warped, orig_frame, ploty, left_fitx, right_fitx, Minv)
+
+                cv2.imshow('Frame', result_frame)
+                if cv2.waitKey(10) & 0xFF == ord('q'):
+                         break
 
         cap.release()
         print("Quit Video Processing")
