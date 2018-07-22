@@ -8,7 +8,7 @@ class LaneDetectionPipeline(object):
         Lane detection pipeline.
     """
 
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, bad_frame_count_threshold=10):
         self._mtx = None # undistort matrice
         self._dist = None
         self._rvect = None
@@ -18,10 +18,9 @@ class LaneDetectionPipeline(object):
         self._current_right_lane = None
         self._bad_frame_count = 0
         self._debug = debug
+        self._bad_frame_count_threshold = bad_frame_count_threshold
 
     def prepare_pipeline(self, chessboard_file_location, shape):
-        self._current_left_lane = Line()
-        self._current_right_lane = Line()
         assert(os.path.exists(chessboard_file_location))
         assert(shape is not None)
         chessboard_files = glob.glob(chessboard_file_location+"/*")
@@ -233,17 +232,11 @@ class LaneDetectionPipeline(object):
         lefty = nonzero_y[all_good_left_lanes]
         rightx = nonzero_x[all_good_right_lanes]
         righty = nonzero_y[all_good_right_lanes]
-        left_fit = np.polyfit(lefty, leftx, 2)
-        right_fit = np.polyfit(righty, rightx, 2)
-        ploty = np.linspace(0, warped_image.shape[0] - 1, warped_image.shape[0] )
-        ploty = np.linspace(0, warped_image.shape[0] - 1, warped_image.shape[0] )
-        left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
-        right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
-
+        # fit a second order polynomial through these points
+        left_fit, right_fit, leftx, lefty, rightx, righty, ploty, left_fitx, right_fitx = \
+                                self.fit_poly(warped_image.shape, leftx, lefty, rightx, righty)
         # FOR PLOTTING ONLY
         if debug:
-
-
             output_img[nonzero_y[all_good_left_lanes], nonzero_x[all_good_left_lanes]] = [255, 0, 0]
             output_img[nonzero_y[all_good_right_lanes], nonzero_x[all_good_right_lanes]] = [0, 0, 255]
             plt.figure(figsize=(10,10))
@@ -300,16 +293,17 @@ class LaneDetectionPipeline(object):
         # now we have the values
         return self.fit_poly(binary_warped.shape, leftx, lefty, rightx, righty)
 
-    def _draw_lanes_on_image(self, warped, undistort_img, ploty, left_fitx, right_fitx, Minv):
+    def _draw_lanes_on_image(self, warped, undistort_img, left_fitx, right_fitx, Minv):
         # Create an image to draw the lines on
         img_shape = undistort_img.shape
+        ploty = np.linspace(0, warped.shape[0]-1, warped.shape[0])
         warp_zero = np.zeros_like(warped).astype(np.uint8)
         color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
         # Recast the x and y points into usable format for cv2.fillPoly()
         pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
         pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
+        #pts_right = np.array([np.transpose(np.vstack([right_fitx, ploty]))])
         pts = np.hstack((pts_left, pts_right))
-
         # Draw the lane onto the warped blank image
         cv2.fillPoly(color_warp, np.int_([pts]), (0,255, 0))
 
@@ -335,23 +329,44 @@ class LaneDetectionPipeline(object):
                 #obtain bird-eye view of the lane
                 warped, M, Minv, _ = self._warp_image_to_bird_eye_view(frame)
                 # if one of the lane is not detected use sliding windows to search it
-                if (not self._current_left_lane.detected) or (not self._current_right_lane.detected):
-                    left_fit, right_fit, leftx, lefty, rightx, righty, ploty, left_fitx ,right_fitx = self._find_lanes_using_sliding_windows(warped)
-                    self._current_left_lane.update(True, allx=leftx, ally=lefty, fit_coeff=left_fit)
-                    self._current_right_lane.update(True, allx=rightx, ally=righty, fit_coeff=right_fit)
+                if (self._current_left_lane is None) or \
+                            (self._current_right_lane is None) or \
+                                            (self._bad_frame_count > self._bad_frame_count_threshold):
+                    print ("Start new search for lanes")
+                    new_left_lane = Line(warped.shape)
+                    new_right_lane = Line(warped.shape)
+                    left_fit, right_fit, leftx, lefty, rightx, righty, ploty, left_fitx ,right_fitx = \
+                                                        self._find_lanes_using_sliding_windows(warped)
+                    new_left_lane.update(allx=leftx, ally=lefty, fit_coeff=left_fit, xfit=left_fitx, yfit=ploty)
+                    new_right_lane.update(allx=rightx, ally=righty, fit_coeff=right_fit, xfit=right_fitx, yfit=ploty)
+
+                    # reset bad framecount
+                    if new_right_lane.detected and new_left_lane.detected:
+                        self._bad_frame_count = 0
+                        self._current_left_lane = new_left_lane
+                        self._current_right_lane = new_right_lane
+                    else:
+                        self._bad_frame_count += 1
+                        left_fitx = self._current_left_lane.bestx
+                        right_fitx = self._current_right_lane.bestx
                 else: # just search around the current line here
-                    print("search around")
+                    print("Search around the previous area")
                     left_fit = self._current_left_lane.best_fit
                     right_fit = self._current_right_lane.best_fit
                     left_fit, right_fit, leftx, lefty, rightx, righty, ploty, left_fitx ,right_fitx = \
                                         self.search_around_poly(warped, left_fit, right_fit)
-                    self._current_left_lane.update(True, allx=leftx, ally=lefty, fit_coeff=left_fit)
-                    self._current_right_lane.update(True, allx=rightx, ally=righty, fit_coeff=right_fit)
+                    self._current_left_lane.update(allx=leftx, ally=lefty, fit_coeff=left_fit, xfit=left_fitx, yfit=ploty)
+                    self._current_right_lane.update(allx=rightx, ally=righty, fit_coeff=right_fit, xfit=right_fitx, yfit=ploty)
+                    if (not self._current_left_lane.detected) or (not self._current_right_lane.detected):
+                        print ("Found bad frame")
+                        self._bad_frame_count += 1
+                        left_fitx = self._current_left_lane.bestx
+                        right_fitx = self._current_right_lane.bestx
 
-                result_frame = self._draw_lanes_on_image(warped, orig_frame, ploty, left_fitx, right_fitx, Minv)
+                result_frame = self._draw_lanes_on_image(warped, orig_frame, left_fitx, right_fitx, Minv)
 
                 cv2.imshow('Frame', result_frame)
-                if cv2.waitKey(10) & 0xFF == ord('q'):
+                if cv2.waitKey(25) & 0xFF == ord('q'):
                          break
 
         cap.release()
