@@ -106,17 +106,17 @@ class LaneDetectionPipeline(object):
         """
         hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
         s_chan = hsv_img[:,:,2]
-        print(s_chan.shape)
+        #print(s_chan.shape)
         binary_img = np.zeros_like(s_chan)
         binary_img [(s_chan > threshold[0]) & (s_chan < threshold[1])] = 1
-        print (s_chan > threshold[0])
+        #print (s_chan > threshold[0])
         return binary_img
 
     def _threshold_image(self, img):
         """
             Apply all threshold techniques to filter out unneccessary noise.
         """
-        print("Apply thresholding to image")
+        #print("Apply thresholding to image")
         abs_image = self._abs_sobel_thresh(img, thresh=(90,255))
         mag_grad_image = self._mag_thresh(img, mag_thresh=(110,255))
         dir_image = self._dir_threshold(img, sobel_kernel=15, thresh=(0.7, 1.3))
@@ -132,7 +132,7 @@ class LaneDetectionPipeline(object):
             Warp image to bird eye view so we can use sliding windows to search
             for the lanes.
         """
-        print ("Warp image shape ", undistort_image.shape)
+        #print ("Warp image shape ", undistort_image.shape)
         width, height = undistort_image.shape[1], undistort_image.shape[0]
         src = np.float32([
             [undistort_image.shape[1]/2 - 120, undistort_image.shape[0]/1.8 + 50], # tl
@@ -320,6 +320,8 @@ class LaneDetectionPipeline(object):
         print ("Start Video Processing")
         # open the video and feed the frame here
         cap = cv2.VideoCapture(video_file)
+        codec = cv2.VideoWriter_fourcc(*'MJPG')
+        output = cv2.VideoWriter('final_video.avi', codec, 20.0, (1280, 720))
         while cap.isOpened():
             ret, orig_frame = cap.read()
             # if frame is valid then run it through the pipe line
@@ -365,7 +367,8 @@ class LaneDetectionPipeline(object):
 
                 result_frame = self._draw_lanes_on_image(warped, orig_frame, left_fitx, right_fitx, Minv)
 
-                cv2.imshow('Frame', result_frame)
+                #cv2.imshow('Frame', result_frame)
+                output.write(result_frame)
                 if cv2.waitKey(25) & 0xFF == ord('q'):
                          break
 
